@@ -37,7 +37,13 @@ app.use(
 );
 
 app.get('/', (req, res) => {
-  const path = resolve(process.env.STATIC_DIR + '/index.html');
+  const indexPath = path.join(staticDir, "index.html");
+if (require('fs').existsSync(indexPath)) {
+  res.sendFile(indexPath);
+} else {
+  res.status(404).send("⚠️ index.html not found.");
+}
+
   res.sendFile(path);
 });
 

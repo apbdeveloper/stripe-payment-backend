@@ -1,50 +1,43 @@
 const express = require('express');
 const app = express();
-const { resolve } = require('path');
-// Replace if using a different env file or config
+const path = require('path');
+const fs = require('fs');
 const env = require('dotenv').config({ path: './.env' });
-const calculateTax = false;
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',
-  appInfo: { // For sample support and debugging, not required for production:
+  appInfo: {
     name: "stripe-samples/accept-a-payment/payment-element",
     version: "0.0.2",
     url: "https://github.com/stripe-samples"
   }
 });
 
-const path = require('path');
+// Ensure STATIC_DIR exists
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, "public");
 
-if (staticDir && require('fs').existsSync(staticDir)) {
-  app.use(express.static(staticDir));
-} else {
-  console.warn("⚠️ STATIC_DIR is not defined or does not exist. Skipping static file serving.");
+if (!fs.existsSync(staticDir)) {
+  console.warn("⚠️ STATIC_DIR is not set or does not exist. Creating 'public/' folder.");
+  fs.mkdirSync(staticDir, { recursive: true });
 }
 
+app.use(express.static(staticDir));
 
-app.use(
-  express.json({
-    // We need the raw body to verify webhook signatures.
-    // Let's compute it only when hitting the Stripe webhook endpoint.
-    verify: function (req, res, buf) {
-      if (req.originalUrl.startsWith('/webhook')) {
-        req.rawBody = buf.toString();
-      }
-    },
-  })
-);
+app.use(express.json({
+  verify: function (req, res, buf) {
+    if (req.originalUrl.startsWith('/webhook')) {
+      req.rawBody = buf.toString();
+    }
+  },
+}));
 
 app.get('/', (req, res) => {
   const indexPath = path.join(staticDir, "index.html");
-if (require('fs').existsSync(indexPath)) {
-  res.sendFile(indexPath);
-} else {
-  res.status(404).send("⚠️ index.html not found.");
-}
-
-  res.sendFile(path);
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).send("⚠️ index.html not found.");
+  }
 });
 
 app.get('/config', (req, res) => {
@@ -54,7 +47,7 @@ app.get('/config', (req, res) => {
 });
 
 const calculate_tax = async (orderAmount, currency) => {
-  const taxCalculation = await stripe.tax.calculations.create({
+  return await stripe.tax.calculations.create({
     currency,
     customer_details: {
       address: {
@@ -75,39 +68,19 @@ const calculate_tax = async (orderAmount, currency) => {
       }
     ],
   });
-
-  return taxCalculation;
 };
 
 app.get('/create-payment-intent', async (req, res) => {
-  // Create a PaymentIntent with the amount, currency, and a payment method type.
-  //
-  // See the documentation [0] for the full list of supported parameters.
-  //
-  // [0] https://stripe.com/docs/api/payment_intents/create
   let orderAmount = 1400;
   let paymentIntent;
 
   try {
-    if (calculateTax) {
-      let taxCalculation = await calculate_tax(orderAmount, "usd")
+    paymentIntent = await stripe.paymentIntents.create({
+      currency: 'usd',
+      amount: orderAmount,
+      automatic_payment_methods: { enabled: true }
+    });
 
-      paymentIntent = await stripe.paymentIntents.create({
-        currency: 'usd',
-        amount: taxCalculation.amount_total,
-        automatic_payment_methods: { enabled: true },
-        metadata: { tax_calculation: taxCalculation.id }
-      });
-    }
-    else {
-      paymentIntent = await stripe.paymentIntents.create({
-        currency: 'usd',
-        amount: orderAmount,
-        automatic_payment_methods: { enabled: true }
-      });
-    }
-
-    // Send publishable key and PaymentIntent details to client
     res.send({
       clientSecret: paymentIntent.client_secret,
     });
@@ -120,16 +93,10 @@ app.get('/create-payment-intent', async (req, res) => {
   }
 });
 
-// Expose a endpoint as a webhook handler for asynchronous events.
-// Configure your webhook in the stripe developer dashboard
-// https://dashboard.stripe.com/test/webhooks
 app.post('/webhook', async (req, res) => {
   let data, eventType;
 
-  // Check if webhook signing is configured.
   if (process.env.STRIPE_WEBHOOK_SECRET) {
-    // Retrieve the event by verifying the signature using the raw body and secret.
-    let event;
     let signature = req.headers['stripe-signature'];
     try {
       event = stripe.webhooks.constructEvent(
@@ -144,16 +111,11 @@ app.post('/webhook', async (req, res) => {
     data = event.data;
     eventType = event.type;
   } else {
-    // Webhook signing is recommended, but if the secret is not configured in `config.js`,
-    // we can retrieve the event data directly from the request body.
     data = req.body.data;
     eventType = req.body.type;
   }
 
   if (eventType === 'payment_intent.succeeded') {
-    // Funds have been captured
-    // Fulfill any orders, e-mail receipts, etc
-    // To cancel the payment after capture you will need to issue a Refund (https://stripe.com/docs/api/refunds)
     console.log('💰 Payment captured!');
   } else if (eventType === 'payment_intent.payment_failed') {
     console.log('❌ Payment failed.');
@@ -161,4 +123,5 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
+// ✅ This must be here for Vercel deployment
 module.exports = app;

@@ -17,7 +17,12 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY, {
 const path = require('path');
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, "public");
 
-app.use(express.static(staticDir));
+if (staticDir && require('fs').existsSync(staticDir)) {
+  app.use(express.static(staticDir));
+} else {
+  console.warn("⚠️ STATIC_DIR is not defined or does not exist. Skipping static file serving.");
+}
+
 
 app.use(
   express.json({

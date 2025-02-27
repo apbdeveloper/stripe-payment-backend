@@ -15,9 +15,12 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY, {
 
 // Ensure STATIC_DIR exists
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, "public");
+
 if (!fs.existsSync(staticDir)) {
+  console.warn("⚠️ STATIC_DIR is not set or does not exist. Creating 'public/' folder.");
   fs.mkdirSync(staticDir, { recursive: true });
 }
+
 app.use(express.static(staticDir));
 
 app.use(express.json({
@@ -28,7 +31,6 @@ app.use(express.json({
   },
 }));
 
-// Serve the frontend
 app.get('/', (req, res) => {
   const indexPath = path.join(staticDir, "index.html");
   if (fs.existsSync(indexPath)) {
@@ -38,30 +40,61 @@ app.get('/', (req, res) => {
   }
 });
 
-// Send Stripe publishable key to frontend
 app.get('/config', (req, res) => {
-  res.send({ publishableKey: process.env.STRIPE_PUBLISHABLE_KEY });
+  res.send({
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+  });
 });
 
-// Create PaymentIntent with dynamic return_url
+const calculate_tax = async (orderAmount, currency) => {
+  return await stripe.tax.calculations.create({
+    currency,
+    customer_details: {
+      address: {
+        line1: "10709 Cleary Blvd",
+        city: "Plantation",
+        state: "FL",
+        postal_code: "33322",
+        country: "US",
+      },
+      address_source: "shipping",
+    },
+    line_items: [
+      {
+        amount: orderAmount,
+        reference: "ProductRef",
+        tax_behavior: "exclusive",
+        tax_code: "txcd_30011000"
+      }
+    ],
+  });
+};
+
+// ✅ Updated to accept return_url dynamically
 app.post('/create-payment-intent', async (req, res) => {
-  const { amount, currency, return_url } = req.body;
+  const { amount, currency, return_url } = req.body; // Get return_url from request
+  let paymentIntent;
 
   try {
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount,
+    paymentIntent = await stripe.paymentIntents.create({
       currency,
+      amount,
       automatic_payment_methods: { enabled: true },
-      metadata: { return_url }
+      metadata: { return_url } // Store return_url in metadata
     });
 
-    res.send({ clientSecret: paymentIntent.client_secret });
+    res.send({
+      clientSecret: paymentIntent.client_secret,
+    });
   } catch (e) {
-    res.status(400).send({ error: { message: e.message } });
+    return res.status(400).send({
+      error: {
+        message: e.message,
+      },
+    });
   }
 });
 
-// Webhook endpoint for Stripe events
 app.post('/webhook', async (req, res) => {
   let data, eventType;
 
@@ -92,4 +125,5 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
+// ✅ This must be here for Vercel deployment
 module.exports = app;

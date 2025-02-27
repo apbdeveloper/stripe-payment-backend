@@ -1,84 +1,64 @@
 document.addEventListener('DOMContentLoaded', async () => {
-  // Load the publishable key from the server. The publishable key
-  // is set in your .env file.
-  const {publishableKey} = await fetch('/config').then((r) => r.json());
+  // Load the publishable key from the server
+  const { publishableKey } = await fetch('/config').then((r) => r.json());
   if (!publishableKey) {
-    addMessage(
-      'No publishable key returned from the server. Please check `.env` and try again'
-    );
     alert('Please set your Stripe publishable API key in the .env file');
+    return;
   }
 
   const stripe = Stripe(publishableKey, {
     apiVersion: '2020-08-27',
   });
 
-  // On page load, we create a PaymentIntent on the server so that we have its clientSecret to
-  // initialize the instance of Elements below. The PaymentIntent settings configure which payment
-  // method types to display in the PaymentElement.
-  const {
-    error: backendError,
-    clientSecret
-  } = await fetch('/create-payment-intent').then(r => r.json());
-  if (backendError) {
-    addMessage(backendError.message);
-  }
-  addMessage(`Client secret returned.`);
+  // Dynamically set return_url based on the page
+  const returnUrl = window.location.origin + "/thank-you.html"; // Adjust per form
 
-  // Initialize Stripe Elements with the PaymentIntent's clientSecret,
-  // then mount the payment element.
-  const loader = 'auto'
-  const elements = stripe.elements({ clientSecret, loader });
+  // Fetch clientSecret with the dynamic return_url
+  const { error: backendError, clientSecret } = await fetch('/create-payment-intent', {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      amount: 1400, // Replace with dynamic amount if needed
+      currency: "usd",
+      return_url: returnUrl
+    })
+  }).then(r => r.json());
+
+  if (backendError) {
+    console.error(backendError.message);
+    return;
+  }
+
+  // Initialize Stripe Elements
+  const elements = stripe.elements({ clientSecret, loader: 'auto' });
   const paymentElement = elements.create('payment');
   paymentElement.mount('#payment-element');
-  // Create and mount the linkAuthentication Element to enable autofilling customer payment details
+
+  // Mount linkAuthenticationElement
   const linkAuthenticationElement = elements.create("linkAuthentication");
   linkAuthenticationElement.mount("#link-authentication-element");
-  // If the customer's email is known when the page is loaded, you can
-  // pass the email to the linkAuthenticationElement on mount:
-  //
-  //   linkAuthenticationElement.mount("#link-authentication-element",  {
-  //     defaultValues: {
-  //       email: 'jenny.rosen@example.com',
-  //     }
-  //   })
-  // If you need access to the email address entered:
-  //
-  //  linkAuthenticationElement.on('change', (event) => {
-  //    const email = event.value.email;
-  //    console.log({ email });
-  //  })
 
-  // When the form is submitted...
+  // Handle form submission
   const form = document.getElementById('payment-form');
   let submitted = false;
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    // Disable double submission of the form
-    if(submitted) { return; }
+    if (submitted) return;
     submitted = true;
     form.querySelector('button').disabled = true;
 
-    const nameInput = document.querySelector('#name');
-
-    // Confirm the payment given the clientSecret
-    // from the payment intent that was just created on
-    // the server.
-    const {error: stripeError} = await stripe.confirmPayment({
+    const { error: stripeError } = await stripe.confirmPayment({
       elements,
       confirmParams: {
-        return_url: `${window.location.origin}/return.html`,
+        return_url: returnUrl
       }
     });
 
     if (stripeError) {
-      addMessage(stripeError.message);
-
-      // reenable the form.
+      console.error(stripeError.message);
       submitted = false;
       form.querySelector('button').disabled = false;
-      return;
     }
   });
 });
